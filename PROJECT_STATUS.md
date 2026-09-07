@@ -1,333 +1,259 @@
 # BioHub Cell Tracking — Project Status
 
 **Status:** Active research prototype  
-**Last reconstructed:** September 2026  
-**Competition:** BioHub Cell Tracking  
-**Current notebook frontier:** Chapter 45 — Division-Aware Track Splitting
+**Last updated:** September 6, 2026  
+**Competition:** BioHub Cell Tracking During Development  
+**Current notebook frontier:** Chapter 47 — Division-Aware Track Birth and Splitting
 
 ## Project Objective
 
-Build an end-to-end system for detecting cells in 3D microscopy volumes, linking detections across time, identifying cell divisions, and constructing biologically plausible cell lineages.
+Build an end-to-end system for detecting cells in 3D microscopy volumes, linking detections across time, identifying cell divisions, and constructing biologically plausible lineage graphs.
 
-The project has evolved experimentally rather than as a single fixed model. The notebook sequence records that evolution: data exploration → candidate detection → learned candidate ranking → temporal tracking → track refinement → division detection → lineage construction → diagnosis and rescue of division failures.
+The project has evolved experimentally rather than as a single fixed model. The notebook sequence records the causal progression from detection → ranking → tracking → refinement → division modeling → failure diagnosis → multi-sample audit → topology correction.
 
 ## Current Technical State
 
-The project has a working prototype pipeline for:
-
-1. generating candidate cell detections,
-2. ranking/filtering candidates,
-3. linking detections across time,
-4. refining tracks and closing gaps,
-5. generating parent/daughter division candidates,
-6. constructing lineage topology,
-7. diagnosing failures around known ground-truth divisions.
-
-The central unresolved problem is **autonomous division inference**. The recent notebooks prove that correct division topology can be represented, but the system does not yet reliably discover and construct that topology without ground-truth assistance.
+The project now has a working multi-sample reproduction harness for the historical Chapter 34 → 35 → 36 → 37 pipeline and a quantitative 13-event division audit.
 
 ### Workstream status
 
 | Workstream | Status | Current assessment |
 | --- | --- | --- |
-| 3D candidate detection | 🟡 Prototype works | Candidate generation is established, but true daughter cells can be weak or temporally displaced. |
-| Candidate ranking/filtering | 🟡 Works but imperfect | Learned ranking improved the detection pipeline, but aggressive filtering can remove valid division daughters. |
-| Temporal tracking | 🟡 Prototype works | Motion-aware assignment and gap closing handle ordinary continuation reasonably well. |
-| Track refinement | 🟡 Prototype works | Weak fragments can be removed and broken trajectories reconnected. |
-| Division candidate generation | 🟡 Prototype | Parent/daughter hypotheses can be generated, but reliable inference remains unresolved. |
-| Division classification | 🔴 Blocked / insufficiently solved | Early supervised attempts exposed very limited positive division examples in the sample being used. |
-| Lineage construction | 🟡 Proof of concept | Correct topology can be represented, including track splitting, but recent proof uses GT assistance. |
-| Autonomous end-to-end lineage inference | 🔴 Not complete | This is now the major research frontier. |
+| 3D candidate detection | 🟢 Working prototype | Chapter 34 produced adequate parent and daughter candidates for all 13 audited GT divisions. |
+| Candidate ranking | 🟢 Working prototype | Historical HistGradientBoosting ranking remains the selected Ch34 path. |
+| Track-aware filtering | 🟡 Imperfect | Filtering caused 3/13 primary division failures and preferentially removes some daughters. |
+| Motion-aware tracking | 🟡 Strong for continuation | Works across multiple samples, but continuation logic is structurally mismatched to division. |
+| Track refinement | 🟡 Working prototype | Ch37 reproduced successfully across the V12 mini-batch. |
+| Division topology | 🔴 Main bottleneck | 8/13 primary failures are tracking/topology failures. |
+| Autonomous lineage inference | 🔴 Not complete | Correct topology is representable but not yet inferred reliably without GT. |
+| Competition-ready inference | 🟡 Not final | Needs topology integration, scoring/validation, and leaderboard iteration. |
+
+## Most Important Result — Chapter 46 Multi-Sample Audit
+
+Chapter 46A V12 reproduced the historical Ch34→35→36→37 pipeline on three independent samples with no stage failures.
+
+Samples and GT binary divisions:
+
+| Sample | GT binary divisions | Ch34 rows | Ch36 rows | Ch37 nodes | Ch37 tracks |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| `6bba_48816121` | 5 | 20,000 | 5,000 | 4,574 | 504 |
+| `6bba_09961292` | 4 | 20,000 | 5,000 | 4,596 | 408 |
+| `6bba_afb141ff` | 4 | 20,000 | 5,000 | 4,722 | 435 |
+
+Total audited GT binary divisions: **13**.
+
+### Candidate survival
+
+| Entity | Ch34 adequate | Ch36 adequate | Ch37 adequate |
+| --- | ---: | ---: | ---: |
+| Parent | 100.0% | 100.0% | 92.3% |
+| Daughter A | 100.0% | 92.3% | 84.6% |
+| Daughter B | 100.0% | 76.9% | 76.9% |
+
+### Primary failure distribution
+
+| Failure | Events | Percent |
+| --- | ---: | ---: |
+| Daughters share one track | 5 | 38.5% |
+| Daughter attached to parent track | 3 | 23.1% |
+| One daughter filtered | 2 | 15.4% |
+| Both daughters filtered | 1 | 7.7% |
+| Topology compatible | 2 | 15.4% |
+
+Grouped by layer:
+
+- **Detection/ranking:** 0 / 13 primary failures
+- **Filtering:** 3 / 13 primary failures (23.1%)
+- **Tracking/topology:** 8 / 13 primary failures (61.5%)
+- **Topology-compatible primary outcome:** 2 / 13 (15.4%)
+
+Additional topology diagnostics:
+
+- either daughter temporally displaced: 11 / 13
+- daughters share a track: 7 / 13 raw topology cases
+- at least one daughter attached to parent track: 10 / 13 raw topology cases
+- raw topology-compatible: 3 / 13
+
+## What Changed Because of Chapter 46
+
+The original single-event diagnosis from Chapters 42–45 made filtering appear to be the central division problem. The multi-sample evidence changes that conclusion.
+
+Filtering still matters, but the dominant failure is now clearly **tracking topology**.
+
+The tracker is designed to solve continuation: one detection becomes one next detection. A cell division requires a different structural operation: one parent must terminate and two new daughter branches must begin.
+
+This explains why restoring daughter detections alone does not solve lineage construction.
 
 ## Reconstructed Research History
 
-The repository is an experimental record rather than a clean linear software release history. Some historical notebooks failed to sync from Kaggle and were recovered separately; Chapter 2 is currently missing. The phases below therefore describe the recoverable research trajectory rather than claiming every chapter is complete or reproducible.
-
-### Phase 1 — Understand the data and ground truth
+### Phase 1 — Data and ground-truth understanding
 
 **Chapters 1–4**
 
-The project began with exploration of the competition data, 3D/4D microscopy volumes, cell tracks, and division events. Visualization tooling became important early because the problem cannot be understood from tabular metrics alone.
+Established microscopy visualization, track inspection, and division understanding. Chapter 3 preserved the known diagnostic division later used in Chapters 42–45.
 
-Recovered history includes:
-
-- Chapter 1 — data exploration; archival execution includes a missing `zarr` dependency.
-- Chapter 2 — missing from the recovered record.
-- Chapter 3 — visualization of cell tracks and divisions.
-- Chapter 4 — visualization tools.
-
-**Milestone:** Established the data model and visual/ground-truth inspection workflow.
-
-### Phase 2 — Establish a baseline detector
+### Phase 2 — Baseline detection and learned filtering
 
 **Chapters 5–13**
 
-The next phase moved from visual exploration to cell-center detection and learned filtering/ranking:
+Moved from hand-tuned LoG-style detection toward learned candidate scoring and ranking.
 
-- Ch5 — baseline cell detection at a single timepoint.
-- Ch6 — tuning and evaluating the baseline detector.
-- Ch8 — learning what a true cell center looks like.
-- Ch9 — candidate filtering for LoG detections.
-- Ch10 — filtered detector from ranked candidates.
-- Ch11 — testing across multiple timepoints.
-- Ch12 — multi-timepoint candidate filter.
-- Ch13 — distance-to-ground-truth ranking model.
-
-The repository does not currently contain a Chapter 7 notebook.
-
-**Milestone:** Detection changed from a hand-tuned candidate generator into a learned candidate-ranking problem.
-
-### Phase 3 — Diagnose candidate coverage and improve 3D ranking
+### Phase 3 — Candidate coverage and 3D ranking
 
 **Chapters 14–26**
 
-This phase focused heavily on whether the detector generated the right candidates at all, how duplicate 3D candidates should be consolidated, and how the surviving candidates should be ranked.
+Separated proposal recall, NMS/consolidation, binary classification, distance ranking, and 3D feature engineering.
 
-Key experiments include:
-
-- Ch14 — oracle candidate coverage analysis.
-- Ch15 — 3D candidate consolidation / NMS.
-- Ch16 — ranking consolidated candidates.
-- Ch17 — oracle distance ranking diagnosis.
-- Ch18 — binary candidate classifier.
-- Ch19 — feature distribution diagnostics.
-- Ch20 — engineered 3D patch features.
-- Ch21 — attempted 3D `oracle_good` ranking model; recovered notebook contains a missing helper/function dependency.
-- Ch22 — diagnostic work around the 3D oracle-good ranking strategy; recovered separately after Kaggle/GitHub sync failure.
-- Ch24 — comparison of binary classification and distance-based ranking.
-- Ch26 — final candidate detector for this stage of the project.
-
-The recovered history has numbering gaps/ambiguities in this region, so chapter numbers should not be treated as evidence that every intermediate notebook survives.
-
-**Milestone:** Candidate quality became an explicit machine-learning ranking problem, with coverage, 3D consolidation, classification, regression, and feature engineering investigated separately.
-
-### Phase 4 — Move from detection to tracking
+### Phase 4 — Temporal association
 
 **Chapters 27–29**
 
-With a candidate detector in place, the project shifted to temporal association:
+Introduced temporal linking and motion-aware global assignment.
 
-- Ch27 — linking detections across consecutive timepoints.
-- Ch27 self-contained variant — reproducible consecutive-timepoint linking experiment.
-- Ch28 — build/evaluate a fuller cell-tracking approach.
-- Ch29 — motion-aware global assignment.
-
-**Milestone:** The project became a tracking system rather than only a cell detector.
-
-### Phase 5 — Improve recall and ranking across samples
+### Phase 5 — Stronger multi-scale detection/ranking
 
 **Chapters 30–34**
 
-The project returned to candidate quality after tracking exposed the cost of missed detections:
+Built the upstream detection pipeline used by all later tracking/division experiments. Chapter 32 showed the HistGradientBoosting ranking path was strong at top-200 candidate selection.
 
-- Ch30 — improve candidate recall with multi-scale methods.
-- Ch31 — stronger ranking models on multiple samples.
-- Ch32 — LightGBM/XGBoost learning-to-rank experiment; recovered separately after sync failure.
-- Ch33 — graph neural-network features for candidate ranking; recovered separately after sync failure.
-- Ch34 — end-to-end detection pipeline.
-
-Chapter 34 became the important upstream detection source for the later tracking/division work, producing the broad candidate set used by subsequent notebooks.
-
-**Milestone:** An end-to-end detection pipeline was established as the upstream input for serious tracking experiments.
-
-### Phase 6 — Build and refine motion-aware tracks
+### Phase 6 — Motion-aware tracking and refinement
 
 **Chapters 35–37**
 
-#### Chapter 35 — Motion-Aware Tracking with Gap Closing
+Added Hungarian assignment, velocity prediction, gap closing, track-aware filtering, and refinement.
 
-Introduced physical-coordinate scaling, Hungarian assignment, velocity prediction, and gap closing.
-
-#### Chapter 36 — Track-Aware Detection Filtering
-
-Used temporal information to reduce the broad detection set. In the later diagnostic sample, the process reduced approximately 20,000 candidate detections to 5,000. Later work showed that this filtering could be too aggressive around division events.
-
-#### Chapter 37 — Track Refinement and Gap Closing
-
-Removed weak track fragments and reconnected broken trajectories using motion-aware gap closing. In the later diagnostic sample, the refined result contained 4,642 nodes and 591 tracks.
-
-**Milestone:** Core motion-aware tracking pipeline established.
-
-## Phase 7 — Add divisions and lineage construction
+### Phase 7 — Division and lineage prototype
 
 **Chapters 38–41**
 
-### Chapter 38 — Cell Division Detection and Lineage Construction
+Generated division candidates and lineage graphs, then exposed insufficient positive division examples for meaningful supervised learning in the original sample.
 
-Generated plausible parent→daughter track relationships, combined daughter pairs into division candidates, scored non-conflicting divisions, and constructed lineage nodes/edges.
-
-**Result:** First complete lineage prototype.
-
-### Chapter 39 — Learning to Predict Cell Divisions
-
-Attempted to replace hand-written division scoring with supervised prediction.
-
-**Critical finding:** The sample under study contained only one ground-truth division, which was insufficient for meaningful supervised learning.
-
-### Chapter 40 — Multi-Sample Division Training
-
-Designed the right conceptual expansion: pool division candidates and labels across multiple training samples. The saved execution, however, still reflected only the existing sample rather than a completed multi-sample training dataset.
-
-### Chapter 41 — GT-Seeded Division Training Examples
-
-Reversed the training-data construction process: begin with a known GT division and search predicted tracks for positive parent/daughter triplets and hard negatives.
-
-**Milestone:** Division inference was isolated as a distinct learning problem, but the project exposed a serious positive-data and candidate-generation bottleneck.
-
-## Phase 8 — Diagnose why divisions fail
+### Phase 8 — Single-event division failure diagnosis
 
 **Chapters 42–45**
 
-This is the most important recent phase because it changed the diagnosis of the problem.
+- Ch42 traced a known GT division through the pipeline.
+- Ch43 restored likely daughter detections before tracking.
+- Ch44 showed that rescued daughters could still be absorbed into continuation trajectories.
+- Ch45 used GT-seeded splitting to prove the graph can represent correct parent→daughter topology.
 
-### Chapter 42 — Trace the GT Division Through the Detection Pipeline
+### Phase 9 — Multi-sample reproduction and quantitative audit
 
-Traced a known division backward through the existing detection/filtering/tracking pipeline.
+**Chapter 46A + Chapter 46**
 
-Known diagnostic division:
+Chapter 46A V6–V11 progressively fixed orchestration problems without changing historical algorithms. V11 achieved the first complete one-sample Ch34→37 reproduction.
 
-- parent `172000000050`, t=66
-- daughter A `173000000050`, t=67
-- daughter B `173000000051`, t=67
+V12 expanded that to three samples and passed 3/3 end-to-end with no stage failures.
 
-Pipeline counts for the diagnostic sample included:
+Chapter 46 V4 then audited 13 binary GT divisions and identified tracking/topology as the dominant measured bottleneck.
 
-- Ch34 broad detections: 20,000
-- Ch36 filtered detections: 5,000
-- Ch37 refined track nodes: 4,642
+**Milestone:** the project moved from a qualitative one-event diagnosis to a quantitative multi-sample causal result.
 
-**Breakthrough:** Division failure was not merely a bad division classifier. Valid daughters could already be lost upstream.
+## Chapter 47 — Division-Aware Track Birth and Splitting
 
-### Chapter 43 — Recover Division Daughters Before Tracking
+**Status:** Planned / ready to implement.
 
-Identified two different upstream failure modes:
+Full plan: [`chapter-47-division-aware-track-birth-and-splitting.md`](chapter-47-division-aware-track-birth-and-splitting.md)
 
-1. one daughter had a substantially better candidate in the broad Ch34 set, but filtering removed it;
-2. another daughter was weak at the exact GT frame, while a much better candidate appeared one frame later.
+### Research question
 
-An experimental rescue step was added before tracking rather than overwriting the baseline filtering pipeline.
+> Can the current refined tracking output be transformed into biologically plausible division topology by detecting likely branch events and creating new daughter tracks, without using ground truth to decide where to split?
 
-**Breakthrough:** Detection/filtering and temporal localization are part of the division problem.
+### Experimental rule
 
-### Chapter 44 — Re-Track with Rescued Division Daughters
+Keep Chapters 34, 36, and 37 fixed. Change only the topology layer so the result is causally interpretable.
 
-Re-ran tracking after restoring likely daughter detections.
+GT may be used only for evaluation after label-free split decisions are made.
 
-The rescued detections survived, but ordinary tracking attached them to trajectories that had begun before the true division.
+### Chapter 47 baseline
 
-**Breakthrough:** Recovering the detections alone does not solve lineage. The tracker itself assumes continuation more naturally than birth/division.
+The same 13 GT events from Chapter 46 define the initial evaluation set:
 
-### Chapter 45 — Division-Aware Track Splitting
+- 8 tracking/topology primary failures
+- 3 filtering primary failures
+- 2 topology-compatible primary outcomes
 
-Used the known GT division to deliberately split trajectories at the division point.
+### Chapter 47 success criteria
 
-**Result:** Demonstrated that the pipeline can represent the correct daughter topology.
+A useful result should:
 
-**Limitation:** This is a proof of concept, not an inference-ready solution, because GT information seeds the split.
+1. avoid GT leakage in split selection;
+2. materially reduce `DAUGHTERS_SHARE_TRACK` and `DAUGHTER_ATTACHED_TO_PARENT_TRACK`;
+3. increase topology-compatible outcomes above the Chapter 46 baseline;
+4. measure false-positive inferred divisions;
+5. preserve original Ch37 artifacts and write transformed outputs separately.
 
-**Milestone:** Correct division topology is representable; autonomous discovery of when and where to perform it remains unsolved.
+## Files to Preserve for Chapter 47
 
-## Most Important Finding So Far
+### V12 combined artifacts
 
-The current division problem is **not one isolated classifier problem**.
+- `chapter34_top200_detections_multisample.csv`
+- `chapter36_filtered_detections_multisample.csv`
+- `chapter37_refined_track_nodes_multisample.csv`
+- `chapter37_refined_track_edges_multisample.csv`
+- `chapter37_refined_track_summary_multisample.csv`
 
-At least three failure layers have been demonstrated:
+### Chapter 46 audit artifacts
 
-1. **Detection/filtering:** a true daughter candidate may exist but be removed.
-2. **Temporal localization:** the strongest daughter evidence may appear one frame away from the annotated division time.
-3. **Tracking topology:** a conventional continuation-oriented tracker may attach a daughter detection to a pre-existing trajectory instead of treating it as a new branch.
+- `chapter46_multisample_division_audit.csv`
+- `chapter46_failure_distribution.csv`
+- `chapter46_topology_summary.csv`
+- `chapter46_ch47_decision_table.csv`
 
-This explains why simply training a stronger division classifier is unlikely to solve the end-to-end problem by itself.
+### Optional diagnostic artifacts
 
-## Current Research Question
+- `chapter36_filtered_track_nodes_multisample.csv`
+- `chapter36_filtered_track_edges_multisample.csv`
+- `chapter35_track_nodes_multisample.csv`
+- `chapter35_track_edges_multisample.csv`
+- `chapter46a_selected_samples.csv`
+- `chapter46a_validation.csv`
 
-> Across the training set, where do true divisions actually fail in the current pipeline?
-
-Before another specialized model is added, the project needs to determine whether the dominant bottleneck is candidate generation, filtering, temporal alignment, tracking topology, division candidate generation, or division scoring.
-
-## Recommended Next Experiment — Chapter 46
-
-### Division Dataset Expansion and Pipeline Audit
-
-**Goal:** Stop diagnosing a single known division and audit every recoverable GT division across multiple training samples.
-
-For each GT division, record whether:
-
-1. the parent has an adequate detection near the division frame;
-2. daughter A has an adequate detection;
-3. daughter B has an adequate detection;
-4. both daughters survive the current filtering stage;
-5. the tracker produces trajectories that can represent the event;
-6. the division-candidate generator proposes the true relationship;
-7. the scoring/selection stage retains the correct division.
-
-Suggested audit table:
-
-| Sample | Division | Parent detected | Daughter A detected | Daughter B detected | Both survive filter | Track-compatible | Candidate generated | Correctly selected | Failure stage |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-
-### Why this should come next
-
-Chapters 42–45 produced a detailed explanation of **one** division. The project does not yet know how representative that example is. Building another classifier now risks optimizing the wrong stage.
-
-Chapter 46 should turn the recent qualitative discoveries into a quantitative failure dataset. That dataset can then determine whether Chapter 47 should focus on detection recall, temporal daughter rescue, division-aware tracking, candidate generation, or learned division scoring.
-
-## Definition of Success for Chapter 46
-
-Chapter 46 is successful when it can answer, with measured counts rather than intuition:
-
-- How many GT divisions are available across the audited samples?
-- What fraction already have adequate parent and daughter candidates?
-- What fraction lose daughters during filtering?
-- How often is the best daughter evidence temporally displaced?
-- How often does ordinary tracking create the wrong topology even when detections exist?
-- How often does the true division enter the candidate set?
-- Which pipeline stage accounts for the largest share of recoverable failures?
-
-The chapter does **not** need to improve the Kaggle score directly. Its purpose is to choose the next optimization target using evidence.
+The original BioHub competition dataset must also remain available in Kaggle for GEFF GT evaluation.
 
 ## Project Maturity
 
-### What has been demonstrated
+### Demonstrated
 
 - Ground-truth and volume visualization
 - 3D candidate generation
 - Candidate coverage analysis
 - Learned candidate ranking
 - 3D feature engineering
-- Multi-timepoint detection work
 - Motion-aware assignment
 - Gap closing
+- Track-aware filtering
 - Track refinement
 - Division candidate generation
 - Lineage construction
 - GT-seeded division examples
-- Upstream division-failure diagnosis
+- Upstream failure diagnosis
 - Daughter rescue
-- Division-aware topology splitting
+- GT-assisted topology splitting
+- Multi-sample pipeline reproduction
+- Multi-sample division failure audit
 
-### What has not yet been demonstrated
+### Not yet demonstrated
 
-- Robust autonomous division discovery across the training set
-- A quantitatively validated division-aware tracking strategy
-- End-to-end lineage construction without GT assistance
-- A final competition-ready inference pipeline validated across representative samples
+- Robust label-free division-aware track birth/splitting
+- False-positive-controlled autonomous lineage inference
+- Competition-ready end-to-end topology integration
+- Final leaderboard-validated solution
 
-## Project Management Rule Going Forward
+## Project Management Rule
 
 **Kaggle is the laboratory. GitHub is the durable project record.**
 
-New experiments should be created because they answer a specific unresolved research question, not merely to continue the chapter numbering. Each meaningful experiment should eventually record:
+Experiments should answer a specific unresolved research question and record:
 
-- question/hypothesis,
-- method/change,
-- result/metrics,
-- failure or lesson,
-- decision for the next experiment.
+- question/hypothesis
+- method/change
+- result/metrics
+- failure/lesson
+- next decision
 
-Failed experiments are part of the research history when they explain why the project changed direction.
+Failed experiments remain part of the project history when they explain why the approach changed.
 
 ## Immediate Next Step
 
-Build **Chapter 46 — Division Dataset Expansion and Pipeline Audit** before designing another division model.
-
-The decision after Chapter 46 should be driven by the measured distribution of failure stages.
+Prepare the Chapter 47 inputs, implement the label-free branch-candidate and topology-splitting notebook, and evaluate it against the same 13 GT divisions before expanding to a larger cohort.
