@@ -1,14 +1,15 @@
 # Chapter 47 — Division-Aware Track Birth and Splitting
 
-**Status:** Ready to implement in Kaggle  
+**Status:** Complete — negative/informative result  
 **Type:** Targeted topology experiment  
-**Depends on:** Chapters 37, 45, 46, and Chapter 46A V12 multi-sample artifacts
+**Executed notebook:** Chapter 47 V4  
+**GitHub commit:** `5f58e6bc13964914a48228a7833eb49bb0908173`
 
-## Why Chapter 47 Exists
+## Why Chapter 47 Existed
 
-Chapter 46A V12 reproduced the historical Chapter 34 → 35 → 36 → 37 pipeline end-to-end on three samples containing 13 binary ground-truth divisions. The Chapter 46 multi-sample audit then quantified where those 13 events fail.
+Chapter 46A V12 reproduced the historical Chapter 34 → 35 → 36 → 37 pipeline end-to-end on three samples containing 13 binary ground-truth divisions. The Chapter 46 multi-sample audit then showed that the dominant measured failure was tracking topology rather than detection.
 
-Measured primary outcomes:
+Measured primary outcomes before Chapter 47:
 
 | Outcome | Events | Percent |
 | --- | ---: | ---: |
@@ -25,7 +26,7 @@ Grouped by pipeline layer:
 - tracking/topology: 8 / 13 primary failures (61.5%)
 - topology compatible: 2 / 13 (15.4%)
 
-Chapter 34 had adequate parent and daughter candidates for 100% of the audited events. The dominant problem is therefore no longer candidate generation. The tracker is forcing division daughters into continuation trajectories.
+Chapter 34 had adequate parent and daughter candidates for 100% of the audited events. The working hypothesis was therefore that a post-tracking topology transform might repair divisions without changing detection, filtering, or historical tracking.
 
 ## Research Question
 
@@ -33,164 +34,135 @@ Chapter 34 had adequate parent and daughter candidates for 100% of the audited e
 
 ## Hypothesis
 
-A continuation-oriented tracker will frequently place two division daughters on one existing trajectory or attach one daughter to the parent trajectory. If we add a post-tracking division-aware topology step that can terminate a parent track and create two daughter births near a plausible division event, then the fraction of topology-compatible GT divisions should increase without changing Chapter 34 detection, Chapter 36 filtering, or the historical Chapter 37 refinement algorithm.
+If finished Chapter 37 trajectories retain enough geometric evidence of true cell division, then a label-free post-hoc heuristic should be able to identify a small set of plausible one-parent→two-daughter branch events and improve topology without creating an uncontrolled number of false-positive divisions.
 
 ## Experimental Constraint
 
-This is a **topology experiment**, not a new detector or filter experiment.
+Chapter 47 was a **topology-only experiment**.
 
-Do not change:
+The upstream V12 artifacts were held fixed. The split proposal used Chapter 37 refined track geometry rather than GT division locations.
 
-- Chapter 34 candidate generation/ranking
-- Chapter 35 motion-aware tracking settings
-- Chapter 36 filtering thresholds or models
-- Chapter 37 refinement/gap-closing settings
-
-Ground truth may be used only for **evaluation**, never for selecting where to split a track.
-
-## Inputs
-
-The implementation notebook should consume the V12 combined artifacts and the Chapter 46 audit outputs.
-
-### Required V12 files
+The final V4 implementation intentionally used only the three V12 files already proven available in `46DataV12`:
 
 - `chapter34_top200_detections_multisample.csv`
 - `chapter36_filtered_detections_multisample.csv`
 - `chapter37_refined_track_nodes_multisample.csv`
-- `chapter37_refined_track_edges_multisample.csv`
-- `chapter37_refined_track_summary_multisample.csv`
 
-### Required Chapter 46 files
+No GEFF/Zarr reopening was required for the structural experiment.
 
-- `chapter46_multisample_division_audit.csv`
-- `chapter46_failure_distribution.csv`
-- `chapter46_topology_summary.csv`
-- `chapter46_ch47_decision_table.csv`
+## Method
 
-### Required competition input
+### 1. Reconstruct Chapter 37 tracks
 
-The original BioHub Cell Tracking competition dataset must remain attached so GT GEFF data is available for final evaluation only.
+Build per-track start/end/duration summaries and physical coordinates from the refined track-node table.
 
-### Optional but useful files
+### 2. Generate label-free branch candidates
 
-- `chapter36_filtered_track_nodes_multisample.csv`
-- `chapter36_filtered_track_edges_multisample.csv`
-- `chapter35_track_nodes_multisample.csv`
-- `chapter35_track_edges_multisample.csv`
-- `chapter46a_selected_samples.csv`
-- `chapter46a_validation.csv`
+For mature tracks, search near the track end for two plausible post-split branches. A branch can be either:
 
-These optional files make it easier to diagnose whether a proposed split is inherited from Chapter 35/36 or introduced only after Chapter 37 refinement.
+- the parent's own continuation suffix; or
+- a distinct track beginning shortly after the proposed split.
 
-## Proposed Method
+Candidate plausibility used only tracking geometry such as:
 
-### Step 1 — Reconstruct refined tracks
-
-Load the Chapter 37 refined nodes and edges for the three V12 samples. Build a per-track representation containing:
-
-- track ID
-- start/end frame
-- ordered node sequence
-- coordinates and physical coordinates
-- local velocity before/after each candidate split frame
-- nearest neighboring tracks around each frame
-
-### Step 2 — Generate label-free split candidates
-
-For each mature parent track, search a small temporal window near the end of the track for evidence that one trajectory should become two.
-
-A candidate event should be based only on predicted-tracking evidence such as:
-
-- two nearby detections/tracks emerging after the same parent state
-- spatial plausibility of both daughters relative to the parent endpoint
-- daughter track starts shortly after the proposed division frame
-- motion continuity from parent to each daughter
-- daughters becoming spatially distinct from one another
-- both daughter branches persisting for more than a trivial number of frames
-- no reliance on GT node IDs, GT division frames, or GT coordinates
-
-### Step 3 — Score candidate branch events
-
-Build an interpretable heuristic score first rather than immediately training a classifier. Candidate components can include:
-
-- parent→daughter A distance
-- parent→daughter B distance
-- temporal offset
+- parent-to-branch distance
+- temporal gap
 - daughter separation
 - branch persistence
-- direction consistency
-- assignment-cost evidence if available
-- whether the current tracker has both daughter detections on the same track
-- whether a candidate daughter track already began before the proposed division frame
+- whether one branch is the current parent continuation and the other is a distinct emerging track
 
-Keep every component in the output table so failures remain diagnosable.
+### 3. Score candidates with a fixed heuristic
 
-### Step 4 — Apply a non-destructive topology transform
+The score combined interpretable components for distance, temporal proximity, persistence, separation, and structural pattern. The threshold was fixed before interpreting the result.
 
-Do not overwrite the original Chapter 37 artifacts.
+### 4. Select non-conflicting events
 
-For an accepted split candidate:
+The notebook enforced a per-sample cap of 25 selected divisions and prevented obvious branch reuse conflicts.
 
-1. preserve the original parent track up to the selected split frame;
-2. create two new daughter track IDs beginning after the split;
-3. move the corresponding post-split node sequences into those daughter tracks;
-4. preserve ordinary continuation edges within each segment;
-5. add explicit parent→daughter lineage edges separately from continuation edges;
-6. ensure no node belongs to multiple continuation tracks;
-7. ensure a parent has at most two daughter branches in this binary-division experiment.
+### 5. Apply a reversible topology transform
 
-### Step 5 — Evaluate against the same 13 GT divisions
+The original Chapter 37 track ID was preserved for every node. New daughter track IDs were written separately, continuation edges were rebuilt from transformed sequences, and parent→daughter lineage edges were written as a separate table.
 
-Reuse the Chapter 46 evaluation logic only after the label-free splits are generated.
+## Chapter 47 V4 Result
 
-Compare **before vs after** for:
+The notebook executed successfully on all three V12 samples.
 
-- topology-compatible GT divisions
-- daughters sharing a track
-- daughter attached to parent track
-- daughter tracks predating the division
-- temporal displacement
-- number of false-positive inferred divisions
-- number of predicted divisions per sample
+| Measure | Result |
+| --- | ---: |
+| Samples | 3 |
+| Chapter 37 tracks | 1,347 |
+| Label-free split candidates | 5,375 |
+| Selected divisions | 75 |
+| Lineage edges | 150 |
+| Nodes moved into daughter tracks | 1,111 |
+| Continuation edges rebuilt | 12,473 |
 
-The baseline for this experiment is the Chapter 46 result:
+The 75 selected divisions are the critical result. The selection rule was capped at **25 per sample**, and all three samples reached the cap.
 
-- 13 GT binary divisions
-- 8 tracking/topology primary failures
-- 3 filtering primary failures
-- 2 topology-compatible primary outcomes
+The same three samples contain only **13 known binary GT divisions** in total.
 
-## Success Criteria
+Therefore the post-hoc heuristic failed the experiment's false-positive sanity gate. It found branch-like geometry far more often than true divisions occur.
 
-Chapter 47 is successful if it demonstrates all of the following:
+## Interpretation
 
-1. **No GT leakage:** the split location and daughter identities are chosen without GT.
-2. **Topology improves:** more than 2 of 13 events become primary `TOPOLOGY_COMPATIBLE` outcomes, or the raw topology-compatible count materially exceeds the Chapter 46 baseline.
-3. **Dominant failure reduced:** `DAUGHTERS_SHARE_TRACK` and `DAUGHTER_ATTACHED_TO_PARENT_TRACK` decrease meaningfully.
-4. **False positives measured:** improvement is not achieved by creating an uncontrolled number of divisions.
-5. **Original artifacts preserved:** the post-processing transform is reversible and produces new output tables.
+This was **not an implementation failure**.
 
-A weak or negative result is still useful if it shows that topology cannot be inferred reliably from the current Chapter 37 outputs alone.
+The notebook successfully:
 
-## Required Outputs
+- generated label-free candidates;
+- scored and selected them;
+- created daughter track IDs;
+- moved post-split nodes;
+- rebuilt continuation edges;
+- created lineage edges;
+- saved the transformed artifacts.
 
-- `chapter47_division_candidates.csv`
-- `chapter47_selected_divisions.csv`
-- `chapter47_split_track_nodes.csv`
-- `chapter47_split_track_edges.csv`
-- `chapter47_lineage_edges.csv`
-- `chapter47_before_after_audit.csv`
-- `chapter47_failure_distribution_before_after.csv`
-- `chapter47_summary.csv`
+The failure is architectural and scientific: **finished Chapter 37 track geometry is not selective enough to distinguish true divisions from ordinary branch-like configurations.**
 
-## Decision After Chapter 47
+The experiment suggests that important evidence has already been collapsed by the time Chapter 37 trajectories are finalized.
 
-If label-free splitting materially improves the 13-event audit without excessive false positives, the next step should integrate the topology logic into the competition inference path and evaluate score impact.
+## Why We Will Not Tune Chapter 47 Against the Same 13 Events
 
-If it fails because plausible daughter branches are not identifiable from Chapter 37 alone, the next experiment should move the division decision earlier, into tracking itself, rather than adding another post-hoc split heuristic.
+A simple response would be to raise the threshold until the predicted division count moves closer to 13. That would risk overfitting the tiny diagnostic set and would violate the purpose of this fixed-heuristic experiment.
 
-If filtering remains the dominant residual error after topology improves, revisit Chapter 36 with a division-preserving filter only after this topology experiment is complete.
+The negative result is more valuable as a clean architectural signal.
 
-## Portfolio Significance
+## Decision
 
-Chapter 47 is the point where the project moves from diagnosing a graph-topology failure to testing an autonomous structural correction. The experiment should remain explicit about causality: detection and filtering stay fixed, topology changes, and the same multi-sample audit measures whether the intervention worked.
+**Do not continue adding post-hoc geometric heuristics to Chapter 37 output as the primary division strategy.**
+
+Move the division decision earlier into temporal assignment.
+
+The next experiment is:
+
+# Chapter 48 — Division-Aware Tracking at Assignment Time
+
+Chapter 48 should compare competing local assignment hypotheses while the evidence is still available:
+
+1. **ordinary continuation:** one parent → one child detection;
+2. **division:** one parent terminates → two daughter detections begin.
+
+Useful assignment-time evidence includes:
+
+- competing detections in the next frame;
+- parent velocity and predicted position;
+- assignment costs;
+- simultaneous plausibility of two daughter detections;
+- daughter separation;
+- new-track birth timing;
+- ±1-frame temporal tolerance;
+- whether a one-to-one continuation would leave another highly plausible daughter unmatched or force an implausible trajectory.
+
+The goal is not to create more branches. The goal is to make division an explicit competing assignment hypothesis with a cost/score that can remain selective.
+
+## Chapter 47 Portfolio Significance
+
+Chapter 47 is an important negative result in the project story:
+
+1. Chapter 46 localized the dominant failure to topology.
+2. Chapter 47 tested the cheapest plausible correction: infer divisions after tracking from finished geometry.
+3. The transform worked technically but generated 5,375 candidates and selected 75 divisions across samples containing 13 known binary divisions.
+4. That result rejected the post-hoc geometry path as insufficiently selective.
+5. The architecture now moves upstream to assignment-time division reasoning.
+
+This is exactly the kind of experimental result worth preserving: the failure narrows the design space and directly determines the next system architecture.
