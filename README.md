@@ -4,7 +4,7 @@ An experimental machine-learning project for detecting and tracking cells throug
 
 This repository documents the evolution of the solution rather than presenting a single finished model. The notebooks record the research process: exploring microscopy data, building candidate detectors, learning to rank cell-center candidates, linking detections through time, refining tracks, detecting divisions, diagnosing failure modes, and experimenting with lineage topology.
 
-> **Current state:** the core detection and motion-aware tracking pipeline is reproducible across multiple samples. A 13-event multi-sample audit shows that the dominant remaining division failure is **tracking topology**, not detection: continuation-oriented tracking frequently merges daughters into one trajectory or attaches a daughter to the parent track. Chapter 47 will test autonomous division-aware track birth/splitting.
+> **Current state:** the core detection and motion-aware tracking pipeline is reproducible across multiple samples. Chapter 46 showed that division failure is dominated by tracking topology rather than detection. Chapter 47 then tested the cheapest post-hoc fix and found that Chapter 37 geometry alone produces far too many plausible split hypotheses. The next frontier is **division-aware tracking at assignment time**.
 
 ## The Problem
 
@@ -33,7 +33,7 @@ motion-aware temporal assignment
         ↓
 track refinement + gap closing
         ↓
-division-aware topology inference   ← current frontier
+division-aware assignment hypotheses   ← current frontier
         ↓
 lineage graph
 ```
@@ -51,7 +51,8 @@ lineage graph
 | 7 | Division and lineage modeling | Built division candidates and the first lineage prototype |
 | 8 | Division failure diagnosis | Traced failures upstream, rescued daughters, and proved track splitting |
 | 9 | Multi-sample reproduction + audit | Reproduced Ch34→37 on 3 samples and quantified 13 GT divisions |
-| 10 | Division-aware track birth/splitting | **Next:** infer topology corrections without GT |
+| 10 | Post-hoc division-aware splitting | Ch47 showed Chapter 37 geometry alone overgenerates division hypotheses |
+| 11 | Division-aware assignment | **Next:** consider one-parent→two-daughter hypotheses during tracking |
 
 See [`PROJECT_STATUS.md`](PROJECT_STATUS.md) for the detailed reconstructed history and current roadmap.
 
@@ -65,7 +66,7 @@ Chapter 46A V12 reproduced the Ch34→35→36→37 pipeline on three samples con
 
 Across the 13-event audit, filtering was the primary failure for **3/13 events (23.1%)**. Parent retention remained strong, while daughter retention was lower.
 
-### Tracking topology is the dominant failure
+### Tracking topology is the dominant measured failure
 
 The Chapter 46 primary failure distribution was:
 
@@ -82,15 +83,30 @@ Grouped by layer:
 - tracking/topology: **8/13 (61.5%)**
 - topology-compatible primary outcome: **2/13 (15.4%)**
 
-This changes the research direction. The earlier one-event diagnosis made daughter filtering look central; the multi-sample audit shows that the larger problem is continuation-oriented track topology.
+This changed the research direction. The earlier one-event diagnosis made daughter filtering look central; the multi-sample audit showed that the larger problem is continuation-oriented track topology.
+
+### Chapter 47 ruled out the simplest post-hoc correction
+
+Chapter 47 V4 held the upstream V12 artifacts fixed and generated division hypotheses using only Chapter 37 track geometry. The notebook completed successfully, but the heuristic was far too permissive:
+
+- Chapter 37 tracks: **1,347**
+- label-free split candidates: **5,375**
+- selected divisions: **75**
+- lineage edges created: **150**
+- nodes moved into daughter branches: **1,111**
+- continuation edges rebuilt: **12,473**
+
+The selection cap was 25 divisions per sample, and all three samples hit that ceiling. The three samples contain only 13 known binary GT divisions in total, so the post-hoc geometry heuristic failed the false-positive sanity gate.
+
+This is an informative negative result: **finished Chapter 37 trajectories do not retain enough selective evidence to infer divisions reliably by geometry alone.**
 
 ### Division timing remains ambiguous
 
-The multi-sample audit also found frequent ±1-frame displacement of daughter evidence. Division inference should tolerate small temporal offsets rather than assuming exact frame alignment.
+The multi-sample audit found frequent ±1-frame displacement of daughter evidence. Division logic should tolerate small temporal offsets rather than assuming exact frame alignment.
 
 ### Correct topology is representable
 
-Chapter 45 used GT-seeded splitting to demonstrate that the graph representation can express parent→two-daughter lineage topology. The remaining problem is discovering where and when to perform that split autonomously.
+Chapter 45 used GT-seeded splitting to demonstrate that the graph representation can express parent→two-daughter lineage topology. The remaining problem is discovering that structure during inference without GT and without creating excessive false-positive branches.
 
 ## Selected Notebook Milestones
 
@@ -106,17 +122,18 @@ Chapter 45 used GT-seeded splitting to demonstrate that the graph representation
 - **Ch45 — Division-Aware Track Splitting:** proves correct topology is representable, but with GT assistance.
 - **Ch46A V12 — Multi-Sample Artifact Generation:** reproduces Ch34→37 on 3 samples end-to-end with no stage failures.
 - **Ch46 V4 — Multi-Sample Division Pipeline Audit:** audits 13 GT divisions and identifies tracking/topology as the dominant measured failure.
-- **Ch47 — Division-Aware Track Birth and Splitting:** next targeted experiment; see [`chapter-47-division-aware-track-birth-and-splitting.md`](chapter-47-division-aware-track-birth-and-splitting.md).
+- **Ch47 V4 — Post-Hoc Division-Aware Track Birth/Splitting:** generates 5,375 candidates and selects 75 divisions, failing the false-positive sanity gate.
+- **Ch48 — Division-Aware Tracking at Assignment Time:** next targeted experiment.
 
 ## Current Research Frontier
 
-The next experiment is **Chapter 47 — Division-Aware Track Birth and Splitting**.
+The next experiment is **Chapter 48 — Division-Aware Tracking at Assignment Time**.
 
 Research question:
 
-> Can the current refined tracking output be transformed into biologically plausible division topology by detecting likely branch events and creating new daughter tracks, without using ground truth to choose where to split?
+> Can the tracker improve lineage topology by evaluating a one-parent→two-daughter assignment hypothesis at the moment of temporal association, before continuation decisions collapse the evidence into finished trajectories?
 
-For causal clarity, Chapter 47 will keep the historical Ch34 detection, Ch36 filtering, and Ch37 refinement fixed. Only the topology stage changes. The same 13 GT divisions will be used for evaluation after the label-free split decisions are generated.
+The motivation comes directly from Chapter 47. Post-hoc geometry can find many branch-like patterns, but it cannot distinguish true divisions selectively enough. Chapter 48 should use information available during assignment—competing detections, assignment costs, parent velocity, temporal birth evidence, and simultaneous plausibility of two daughters—rather than trying to reconstruct the decision afterward.
 
 ## Repository Notes
 
@@ -130,9 +147,9 @@ Failed experiments are intentionally preserved when they explain why the approac
 
 This is an **active research prototype**, not a production cell-tracking library.
 
-**Working/proven:** 3D candidate generation, learned ranking experiments, motion-aware tracking, filtering, gap closing, track refinement, division candidate generation, lineage representation, multi-sample artifact reproduction, multi-sample division auditing, and GT-assisted topology splitting.
+**Working/proven:** 3D candidate generation, learned ranking experiments, motion-aware tracking, filtering, gap closing, track refinement, division candidate generation, lineage representation, multi-sample artifact reproduction, multi-sample division auditing, GT-assisted topology splitting, and a completed label-free post-hoc topology experiment.
 
-**Still unresolved:** autonomous division-aware track birth/splitting, false-positive-controlled lineage inference without GT, competition-ready integration, and final leaderboard validation.
+**Still unresolved:** selective autonomous division inference, division-aware assignment during tracking, false-positive-controlled lineage construction, competition-ready integration, and final leaderboard validation.
 
 For detailed status and evidence, see **[`PROJECT_STATUS.md`](PROJECT_STATUS.md)**.
 
